@@ -1,0 +1,5 @@
+import { startProcessing, getJob, cancelJob } from "@/lib/document/processing-job"; import { errorResponse } from "@/lib/http/errors";
+export const runtime = "nodejs";
+export async function POST(request: Request) { try { const form = await request.formData(); const file = form.get("file"); if (!(file instanceof File)) throw new Error("A file is required."); return Response.json({ jobId: startProcessing(file) }, { status: 202 }); } catch (error) { return errorResponse(error); } }
+export async function GET(request: Request) { try { const id = new URL(request.url).searchParams.get("jobId"); if (!id) return Response.json({ error: "jobId is required" }, { status: 400 }); return Response.json(getJob(id)); } catch (error) { return errorResponse(error); } }
+export async function DELETE(request: Request) { try { const id = new URL(request.url).searchParams.get("jobId"); if (!id) return Response.json({ error: "jobId is required" }, { status: 400 }); cancelJob(id); return new Response(null, { status: 204 }); } catch (error) { return errorResponse(error); } }

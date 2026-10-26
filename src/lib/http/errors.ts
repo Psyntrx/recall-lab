@@ -1,0 +1,2 @@
+export class AppError extends Error { constructor(message: string, public readonly status = 400, public readonly code = "BAD_REQUEST") { super(message); } }
+export function errorResponse(error: unknown) { const known = error instanceof AppError ? error : new AppError("An unexpected server error occurred.", 500, "INTERNAL_ERROR"); return Response.json({ error: known.message, code: known.code }, { status: known.status }); }

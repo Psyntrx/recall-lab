@@ -1,0 +1,2 @@
+import { publicQuiz, results } from "@/lib/quiz/store"; import { errorResponse } from "@/lib/http/errors";
+export function GET(_: Request, { params }: { params: Promise<{ quizId: string }> }) { return params.then(({ quizId }) => { try { const mode = new URL(_.url).searchParams.get("results"); return Response.json(mode ? results(quizId) : publicQuiz(quizId)); } catch (error) { return errorResponse(error); } }); }

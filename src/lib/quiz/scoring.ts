@@ -1,0 +1,3 @@
+import type { Question } from "./schemas";
+export function calculateScore(questions: Question[], answers: Record<string, string>) { const correct = questions.filter((q) => answers[q.id] === q.correct_answer).length; const total = questions.length; return { correct, incorrect: total - correct, total, percentage: total ? Math.round((correct / total) * 10000) / 100 : 0 }; }
+export function groupMisses(questions: Question[], answers: Record<string, string>) { return questions.filter((q) => answers[q.id] !== q.correct_answer).reduce<Record<string, Question[]>>((groups, q) => { (groups[q.topic_reference] ??= []).push(q); return groups; }, {}); }

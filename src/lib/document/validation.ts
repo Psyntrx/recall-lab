@@ -1,0 +1,5 @@
+import { config } from "@/lib/config"; import { AppError } from "@/lib/http/errors";
+export function validateUpload(file: File) { const name = file.name.toLowerCase(); const allowed = name.endsWith(".pdf") || name.endsWith(".txt"); if (!allowed) throw new AppError("Upload a PDF or plain-text (.txt) file.", 400, "UNSUPPORTED_FILE"); if (!file.size) throw new AppError("The uploaded file is empty.", 422, "EMPTY_FILE"); if (file.size > config.maxUploadBytes) throw new AppError(`The file exceeds the ${Math.floor(config.maxUploadBytes / 1024 / 1024)} MB limit.`, 413, "FILE_TOO_LARGE"); }
+export function meaningfulWords(text: string) { return text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu)?.length ?? 0; }
+export function requiredQuestionMaximum(words: number) { return Math.min(30, Math.floor(words / 120)); }
+export function assertSufficientMaterial(text: string) { const words = meaningfulWords(text); if (words < 600 || requiredQuestionMaximum(words) < 5) throw new AppError("This material does not contain enough readable, meaningful content for five defensible questions. Upload more complete notes or a clearer document.", 422, "INSUFFICIENT_MATERIAL"); return words; }
