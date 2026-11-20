@@ -2,6 +2,9 @@
   "name": "ai-study-quiz",
   "version": "0.1.0",
   "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["@napi-rs/canvas", "tesseract.js", "unrs-resolver"]
+  },
   "scripts": {
     "copy-worker": "node scripts/copy-pdf-worker.mjs",
     "predev": "node scripts/copy-pdf-worker.mjs",
@@ -15,6 +18,7 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^0.1.78",
+    "@vercel/analytics": "^2.0.1",
     "next": "^16.4.6",
     "openai": "^6.20.0",
     "pdfjs-dist": "^5.4.624",

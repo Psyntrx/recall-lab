@@ -1,0 +1,4 @@
+allowBuilds:
+  '@napi-rs/canvas': true
+  tesseract.js: true
+  unrs-resolver: true
