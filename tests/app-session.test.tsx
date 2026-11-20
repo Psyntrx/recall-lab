@@ -35,7 +35,7 @@ describe("shared session experience", () => {
     const session = setSharedUrl();
     render(<Home />);
     expect(await screen.findByRole("heading", { name: session.title })).toBeTruthy();
-    expect(screen.getByText("AI Study Quiz · Shared study session")).toBeTruthy();
+    expect(screen.getByText("Recall Lab · Shared study session")).toBeTruthy();
     expect(screen.getByText(session.created_local)).toBeTruthy();
     expect(screen.getByText(session.session_id)).toBeTruthy();
     expect(screen.getByText("Chapter 2: Equilibrium, Chapter 3: Moments")).toBeTruthy();

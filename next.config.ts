@@ -1,3 +1,9 @@
 import type { NextConfig } from "next";
-const nextConfig: NextConfig = { serverExternalPackages: ["tesseract.js", "@napi-rs/canvas"] };
+
+const nextConfig: NextConfig = {
+  experimental: {
+    agentUpgrade: "security",
+  },
+};
+
 export default nextConfig;

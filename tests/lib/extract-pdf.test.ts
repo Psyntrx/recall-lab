@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractPdf } from "@/lib/document/extract";
+import { extractPdf } from "@/lib/document/browser-extract";
 
 function textPdf(text: string) {
   const stream = `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;

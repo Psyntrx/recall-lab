@@ -2,7 +2,13 @@
   "name": "ai-study-quiz",
   "version": "0.1.0",
   "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["@napi-rs/canvas", "tesseract.js", "unrs-resolver"]
+  },
   "scripts": {
+    "copy-worker": "node scripts/copy-pdf-worker.mjs",
+    "predev": "node scripts/copy-pdf-worker.mjs",
+    "prebuild": "node scripts/copy-pdf-worker.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -13,7 +19,7 @@
   "dependencies": {
     "@napi-rs/canvas": "^0.1.78",
     "@vercel/analytics": "^2.0.1",
-    "next": "^16.4.2",
+    "next": "^16.4.6",
     "openai": "^6.20.0",
     "pdfjs-dist": "^5.4.624",
     "react": "^19.3.0",
@@ -29,7 +35,7 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "eslint": "^9.38.0",
-    "eslint-config-next": "^16.4.2",
+    "eslint-config-next": "^16.4.6",
     "jsdom": "^27.0.1",
     "tailwindcss": "^4.1.14",
     "typescript": "^5.9.3",
