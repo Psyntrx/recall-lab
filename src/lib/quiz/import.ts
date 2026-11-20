@@ -1,4 +1,5 @@
 export type AnswerKey = "A" | "B" | "C" | "D";
+
 export type Question = {
   id: string;
   question: string;
@@ -7,7 +8,12 @@ export type Question = {
   topic_reference: string;
   explanation: string;
   source_reference: string | null;
+  chapter?: string;
+  difficulty?: "easy" | "medium" | "hard";
+  question_source?: "extracted" | "generated" | "adapted";
+  option_explanations?: Partial<Record<AnswerKey, string>>;
 };
+
 export type QuizFile = { title: string; questions: Question[] };
 
 export function validateQuiz(value: unknown): QuizFile {
@@ -34,7 +40,23 @@ export function validateQuiz(value: unknown): QuizFile {
     if (typeof q.topic_reference !== "string" || !q.topic_reference.trim()) throw new Error(`${path} needs a topic_reference.`);
     if (typeof q.explanation !== "string" || !q.explanation.trim()) throw new Error(`${path} needs an explanation.`);
     if (q.source_reference !== null && typeof q.source_reference !== "string") throw new Error(`${path} source_reference must be text or null.`);
-    return { id: q.id, question: q.question, options: { A: options.A as string, B: options.B as string, C: options.C as string, D: options.D as string }, correct_answer: q.correct_answer as AnswerKey, topic_reference: q.topic_reference, explanation: q.explanation, source_reference: q.source_reference as string | null };
+
+    const formatted: Question = {
+      id: q.id,
+      question: q.question,
+      options: { A: options.A as string, B: options.B as string, C: options.C as string, D: options.D as string },
+      correct_answer: q.correct_answer as AnswerKey,
+      topic_reference: q.topic_reference,
+      explanation: q.explanation,
+      source_reference: q.source_reference as string | null,
+    };
+
+    if (typeof q.chapter === "string" && q.chapter.trim()) formatted.chapter = q.chapter.trim();
+    if (q.difficulty === "easy" || q.difficulty === "medium" || q.difficulty === "hard") formatted.difficulty = q.difficulty;
+    if (q.question_source === "extracted" || q.question_source === "generated" || q.question_source === "adapted") formatted.question_source = q.question_source;
+    if (q.option_explanations && typeof q.option_explanations === "object") formatted.option_explanations = q.option_explanations as Partial<Record<AnswerKey, string>>;
+
+    return formatted;
   });
   if (new Set(questions.map((q) => q.question.trim().toLocaleLowerCase())).size !== questions.length) throw new Error("Questions must be unique.");
   return { title: typeof candidate.title === "string" && candidate.title.trim() ? candidate.title.trim() : "Study quiz", questions };
