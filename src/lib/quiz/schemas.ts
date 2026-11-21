@@ -62,3 +62,10 @@ export const recommendationSchema = z.object({
 
 export type RevisionPlan = z.infer<typeof recommendationSchema>;
 export const answerSubmissionSchema = z.object({ answer: answerKey });
+
+export const documentSummarySchema = z.object({
+  title: z.string().optional(),
+  summary: z.string().min(1),
+  keyTopics: z.array(z.string()).optional(),
+});
+export type DocumentSummary = z.infer<typeof documentSummarySchema>;
