@@ -29,3 +29,12 @@ Each recommendation must include:
 - "source_reference": Chapter or page reference to revisit if available in the source material, or null.
 - "action": Concrete study action (e.g. "Review phasor diagrams and derive the voltage equation").
 - "self_check": A specific practice question or diagnostic test for the student to confirm mastery.`;
+
+export const summarySystemPrompt = `You are an expert academic summarizer and study coach.
+Synthesize the provided learning materials into a clear, high-yield summary.
+Return ONLY a valid JSON object matching the schema:
+{
+  "title": "Concise title for the document or subject",
+  "summary": "Comprehensive conceptual summary highlighting key principles, definitions, and takeaways.",
+  "keyTopics": ["Topic 1", "Topic 2", ...]
+}`;

@@ -9,6 +9,7 @@ import type { NormalizedDocument } from "@/lib/document/types";
 export const runtime = "nodejs";
 
 export type QuizGenerateRequestBody = {
+  jobId?: string;
   document?: NormalizedDocument;
   options?: {
     questionCount?: number;
@@ -20,6 +21,7 @@ export type QuizGenerateRequestBody = {
 };
 
 export async function POST(request: Request) {
+  let activeJobId: string | undefined;
   try {
     const body = (await request.json()) as QuizGenerateRequestBody;
     const { document, options, assessmentContext } = body;
@@ -37,12 +39,14 @@ export async function POST(request: Request) {
       ? Math.min(options.questionCount, Math.max(5, maximumAllowed))
       : Math.min(10, Math.max(5, maximumAllowed));
 
-    const jobId = randomUUID();
+    const jobId = body.jobId || randomUUID();
+    activeJobId = jobId;
+
     const job: DurableJob = {
       id: jobId,
       progress: {
         stage: "generating",
-        message: `Generating ${targetCount} grounded questions with AI...`,
+        message: `Preparing question generation for ${targetCount} questions...`,
       },
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -58,6 +62,11 @@ export async function POST(request: Request) {
       focus: options?.focus,
       difficulty: options?.difficulty,
       assessmentQuestionsContext: assessmentContext,
+      onProgress: (progress) => {
+        job.progress = progress;
+        job.updatedAt = Date.now();
+        storage.saveJob(job);
+      },
     });
 
     const quiz = createQuiz(generated.questions, document);
@@ -73,6 +82,17 @@ export async function POST(request: Request) {
       jobId,
     });
   } catch (error) {
+    if (activeJobId) {
+      const existingJob = storage.getJob(activeJobId);
+      if (existingJob) {
+        const message = error instanceof Error ? error.message : "Generation failed.";
+        const code = error instanceof AppError ? error.code : "INTERNAL_ERROR";
+        existingJob.progress = { stage: "failed", message };
+        existingJob.error = { message, code };
+        existingJob.updatedAt = Date.now();
+        storage.saveJob(existingJob);
+      }
+    }
     return errorResponse(error);
   }
 }

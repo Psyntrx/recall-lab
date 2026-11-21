@@ -11,8 +11,8 @@ export const config = {
   ocrLanguage: process.env.OCR_LANGUAGE ?? "eng",
   aiProvider: process.env.AI_PROVIDER ?? "groq",
   groqApiKey: process.env.GROQ_API_KEY,
-  groqModel: process.env.GROQ_MODEL ?? "openai/gpt-oss-20b",
-  groqFallbackModel: process.env.GROQ_FALLBACK_MODEL ?? "llama-3.3-70b-versatile",
+  groqModel: process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
+  groqFallbackModel: process.env.GROQ_FALLBACK_MODEL,
   openaiApiKey: process.env.OPENAI_API_KEY,
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
 };

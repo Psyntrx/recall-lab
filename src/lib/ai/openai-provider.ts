@@ -2,10 +2,26 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { config, MIN_QUESTIONS } from "@/lib/config";
 import { AppError } from "@/lib/http/errors";
-import { questionSetSchema, recommendationSchema, type QuestionSet, type RevisionPlan } from "@/lib/quiz/schemas";
+import {
+  questionSetSchema,
+  recommendationSchema,
+  documentSummarySchema,
+  type QuestionSet,
+  type RevisionPlan,
+  type DocumentSummary,
+} from "@/lib/quiz/schemas";
 import type { NormalizedDocument } from "@/lib/document/types";
-import type { AiProvider, QuestionGenerationInput, RecommendationInput } from "./provider";
-import { questionSystemPrompt, recommendationSystemPrompt } from "./prompts";
+import type {
+  AiProvider,
+  QuestionGenerationInput,
+  RecommendationInput,
+  DocumentSummaryInput,
+} from "./provider";
+import {
+  questionSystemPrompt,
+  recommendationSystemPrompt,
+  summarySystemPrompt,
+} from "./prompts";
 
 export class OpenAiProvider implements AiProvider {
   public readonly name = "OpenAI";
@@ -104,5 +120,35 @@ export class OpenAiProvider implements AiProvider {
 
   public async generateRecommendations(input: RecommendationInput): Promise<RevisionPlan> {
     return this.structured(recommendationSystemPrompt, input, recommendationSchema, "revision_plan");
+  }
+
+  public async generateSummary(
+    input: DocumentSummaryInput | NormalizedDocument | string
+  ): Promise<DocumentSummary> {
+    let text = "";
+    let focus: string | undefined;
+
+    if (typeof input === "string") {
+      text = input;
+    } else if ("text" in input && typeof input.text === "string") {
+      text = input.text;
+    } else if ("document" in input) {
+      text = typeof input.document === "string" ? input.document : input.document.text;
+      focus = input.focus;
+    }
+
+    if (text.length > 100_000) {
+      text = text.slice(0, 100_000) + "\n\n[Excerpt truncated to fit context]";
+    }
+
+    return this.structured(
+      summarySystemPrompt,
+      {
+        source_material: text,
+        focus,
+      },
+      documentSummarySchema,
+      "document_summary"
+    );
   }
 }

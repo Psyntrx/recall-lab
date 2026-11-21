@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import OpenAI from "openai";
 import { GroqProvider } from "@/lib/ai/groq-provider";
 import { getAiProvider } from "@/lib/ai/factory";
 import { config } from "@/lib/config";
@@ -37,6 +38,33 @@ describe("Groq AI Provider and Provider Factory", () => {
 
     delete process.env.GROQ_API_KEY;
     config.groqApiKey = undefined;
+  });
+
+  it("defaults to openai/gpt-oss-120b and does not reference deprecated model", () => {
+    const originalModel = process.env.GROQ_MODEL;
+    delete process.env.GROQ_MODEL;
+    config.groqModel = "openai/gpt-oss-120b";
+
+    const provider = new GroqProvider();
+    expect(provider.getModel()).toBe("openai/gpt-oss-120b");
+    expect(provider.getModelsToTry()).not.toContain("llama-3.3-70b-versatile");
+
+    if (originalModel) process.env.GROQ_MODEL = originalModel;
+  });
+
+  it("allows configuring the Groq model via GROQ_MODEL environment variable", () => {
+    const originalModel = process.env.GROQ_MODEL;
+    process.env.GROQ_MODEL = "openai/gpt-oss-custom-model";
+
+    const provider = new GroqProvider();
+    expect(provider.getModel()).toBe("openai/gpt-oss-custom-model");
+    expect(provider.getModelsToTry()[0]).toBe("openai/gpt-oss-custom-model");
+
+    if (originalModel) {
+      process.env.GROQ_MODEL = originalModel;
+    } else {
+      delete process.env.GROQ_MODEL;
+    }
   });
 
   it("parses valid question sets with rich metadata from Groq response", async () => {
@@ -160,6 +188,119 @@ describe("Groq AI Provider and Provider Factory", () => {
     expect(result.questions[0].chapter).toBe("Chapter 2");
     expect(result.questions[0].question_source).toBe("generated");
     expect(result.questions[1].question_source).toBe("extracted");
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "openai/gpt-oss-120b",
+      })
+    );
+
+    delete process.env.GROQ_API_KEY;
+    config.groqApiKey = undefined;
+  });
+
+  it("differentiates model-not-found / retired errors with specific message and code", async () => {
+    process.env.GROQ_API_KEY = "gsk_test_key_12345";
+    config.groqApiKey = "gsk_test_key_12345";
+
+    const provider = new GroqProvider();
+    const notFoundError = new OpenAI.APIError(
+      404,
+      { error: { message: "The model llama-3.3-70b-versatile does not exist or you do not have access to it." } },
+      "The model llama-3.3-70b-versatile does not exist or you do not have access to it.",
+      new Headers()
+    );
+
+    vi.spyOn(provider as any, "client").mockReturnValue({
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(notFoundError),
+        },
+      },
+    });
+
+    const doc: NormalizedDocument = {
+      filename: "test.txt",
+      pages: [{ page: 1, text: "content", source: "native" }],
+      text: "content",
+      wordCount: 10,
+      truncated: false,
+    };
+
+    await expect(provider.generateQuestions(doc, 5)).rejects.toMatchObject({
+      code: "AI_MODEL_NOT_FOUND",
+      status: 404,
+      message: expect.stringMatching(/Groq model error/i),
+    });
+
+    delete process.env.GROQ_API_KEY;
+    config.groqApiKey = undefined;
+  });
+
+  it("differentiates authentication errors clearly", async () => {
+    process.env.GROQ_API_KEY = "gsk_invalid_key";
+    config.groqApiKey = "gsk_invalid_key";
+
+    const provider = new GroqProvider();
+    const authError = new OpenAI.APIError(
+      401,
+      { error: { message: "Invalid API Key" } },
+      "Invalid API Key",
+      new Headers()
+    );
+
+    vi.spyOn(provider as any, "client").mockReturnValue({
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(authError),
+        },
+      },
+    });
+
+    const doc: NormalizedDocument = {
+      filename: "test.txt",
+      pages: [{ page: 1, text: "content", source: "native" }],
+      text: "content",
+      wordCount: 10,
+      truncated: false,
+    };
+
+    await expect(provider.generateQuestions(doc, 5)).rejects.toMatchObject({
+      code: "AI_AUTH_ERROR",
+      status: 401,
+      message: expect.stringMatching(/Groq authentication failed/i),
+    });
+
+    delete process.env.GROQ_API_KEY;
+    config.groqApiKey = undefined;
+  });
+
+  it("generates summaries using the configured model", async () => {
+    process.env.GROQ_API_KEY = "gsk_test_key_12345";
+    config.groqApiKey = "gsk_test_key_12345";
+    process.env.GROQ_MODEL = "openai/gpt-oss-120b";
+
+    const provider = new GroqProvider();
+    const sampleSummary = {
+      title: "Electromagnetic Induction",
+      summary: "Faraday's law describes how changing magnetic flux induces an electromotive force.",
+      keyTopics: ["Faraday's Law", "Lenz's Law"],
+    };
+
+    const mockCreate = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify(sampleSummary) } }],
+    });
+    vi.spyOn(provider as any, "client").mockReturnValue({
+      chat: { completions: { create: mockCreate } },
+    });
+
+    const summary = await provider.generateSummary("Sample lecture content on electromagnetic induction");
+    expect(summary.title).toBe("Electromagnetic Induction");
+    expect(summary.keyTopics).toHaveLength(2);
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "openai/gpt-oss-120b",
+      })
+    );
 
     delete process.env.GROQ_API_KEY;
     config.groqApiKey = undefined;

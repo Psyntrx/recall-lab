@@ -9,7 +9,7 @@ Every question features four distinct choices (A–D), one correct answer, and c
 ## Features
 
 - **Direct In-App AI Generation:** No need to copy prompts to external chatbots and paste JSON back. Everything happens inside Recall Lab.
-- **Primary AI Provider — Groq:** High-throughput inference with `openai/gpt-oss-20b` (and `llama-3.3-70b-versatile` fallback), plus configurable support for OpenAI (`gpt-4o-mini`).
+- **Primary AI Provider — Groq:** High-throughput inference with `openai/gpt-oss-120b` (configurable via `GROQ_MODEL`, with optional `openai/gpt-oss-20b` fallback), plus configurable support for OpenAI (`gpt-4o-mini`).
 - **Scalable Document Processing:** Removes restrictive page limits to handle multi-hundred page textbooks and multiple files in a single session.
 - **Intelligent Chapter Detection:** Detects chapters via table of contents and headings, allowing students to focus quizzes on specific chapters or the entire textbook.
 - **Past-Paper & CAT Intelligence:** Automatically classifies assessment papers, extracts exam questions, matches them to textbook topics, detects repeated questions, and constructs an assessment coverage map.
@@ -41,8 +41,8 @@ Add your Groq API key:
 ```env
 AI_PROVIDER=groq
 GROQ_API_KEY=your_groq_api_key_here
-GROQ_MODEL=openai/gpt-oss-20b
-GROQ_FALLBACK_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
+GROQ_FALLBACK_MODEL=openai/gpt-oss-20b
 ```
 
 *(Optional: You can also configure `OPENAI_API_KEY` to use OpenAI as an alternative provider).*

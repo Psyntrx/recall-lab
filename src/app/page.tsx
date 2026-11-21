@@ -22,6 +22,8 @@ import { InvalidSessionLanding, SessionLanding } from "./session-landing";
 import { classifyDocument } from "@/lib/document/classification";
 import { processDocumentsInBrowser } from "@/lib/document/browser-pipeline";
 import type { DocumentType } from "@/lib/document/types";
+import { buildStudyPackage } from "@/lib/export/external-package";
+import { validateExternalAiJson, type ImportValidationResult } from "@/lib/quiz/import-validation";
 
 type Attempt = { selected: AnswerKey; correct: boolean };
 
@@ -64,8 +66,9 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function download(name: string, content: string, type = "text/plain;charset=utf-8") {
-  const url = URL.createObjectURL(new Blob([content], { type }));
+function download(name: string, content: string | Blob, type = "text/plain;charset=utf-8") {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = name;
@@ -101,6 +104,13 @@ export default function Home() {
   const [generationMessage, setGenerationMessage] = useState<string>("");
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // External AI Export & Import Modal State
+  const [isExportingZip, setIsExportingZip] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importInputText, setImportInputText] = useState("");
+  const [importResult, setImportResult] = useState<ImportValidationResult | null>(null);
+  const [importConfirmOverwrite, setImportConfirmOverwrite] = useState(false);
 
   // Shared Session State
   const [sharedSession, setSharedSession] = useState<StudySession | null>(null);
@@ -241,6 +251,90 @@ export default function Home() {
     setUploadedFiles(uploadedFiles.filter((f) => f.id !== id));
   }
 
+  // Export for External AI as ZIP Package
+  async function handleExportExternalPackage() {
+    if (uploadedFiles.length === 0) {
+      setError("Please upload at least one study document before exporting.");
+      return;
+    }
+    setError("");
+    setIsExportingZip(true);
+    setNotice("Packaging reference materials, instructions, and schemas into ZIP...");
+
+    try {
+      const pkg = await buildStudyPackage({
+        files: uploadedFiles.map((u) => ({ name: u.name, file: u.file })),
+        questionCount,
+        focus: focus.trim() || undefined,
+        difficulty: difficulty !== "mixed" ? difficulty : undefined,
+      });
+
+      download(pkg.filename, pkg.zipBlob);
+      setNotice(
+        `Exported "${pkg.filename}". Upload references/ and AI_PROMPT.md to ChatGPT, Claude, or another AI, then import the resulting JSON here.`
+      );
+    } catch (err) {
+      setError(`Failed to build study package: ${prettyError(err)}`);
+    } finally {
+      setIsExportingZip(false);
+    }
+  }
+
+  // Import External AI JSON Handlers
+  function handleImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      setImportInputText(text);
+      const res = validateExternalAiJson(text);
+      setImportResult(res);
+      setImportConfirmOverwrite(false);
+    };
+    reader.onerror = () => {
+      setImportResult({
+        success: false,
+        errors: ["Could not read the uploaded JSON file."],
+        warnings: [],
+      });
+    };
+    reader.readAsText(file);
+  }
+
+  function handleValidateImport() {
+    const res = validateExternalAiJson(importInputText);
+    setImportResult(res);
+    setImportConfirmOverwrite(false);
+  }
+
+  function handleConfirmImport() {
+    if (!importResult?.success || !importResult.quiz) return;
+
+    // Check if an existing quiz with answers is currently in progress
+    if (!importConfirmOverwrite && quiz && Object.keys(attempts).length > 0) {
+      setImportConfirmOverwrite(true);
+      return;
+    }
+
+    const importedQuiz = importResult.quiz;
+    setQuiz(importedQuiz);
+    setActiveSession(null);
+    setAttempts({});
+    setIndex(0);
+    setChoice(null);
+    setRevealed(false);
+    setAttemptCompletedAt(null);
+    setAttemptCompletedLocal(null);
+    setError("");
+    setNotice(`Successfully imported "${importedQuiz.title}" with ${importedQuiz.questions.length} questions.`);
+    setIsImportModalOpen(false);
+    setImportInputText("");
+    setImportResult(null);
+    setImportConfirmOverwrite(false);
+  }
+
   // Generate Questions via In-App AI
   async function triggerAiGeneration() {
     if (uploadedFiles.length === 0) {
@@ -274,90 +368,129 @@ export default function Home() {
         `Generating ${questionCount} grounded questions with AI...`
       );
 
-      const res = await fetch("/api/quiz", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          document: processed.masterDoc,
-          options: {
-            questionCount,
-            focus: focus.trim() || undefined,
-            difficulty: difficulty !== "mixed" ? difficulty : undefined,
-          },
-          assessmentContext: processed.assessmentContext,
-        }),
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || "Failed to generate quiz.");
-      }
-
-      const resData = await res.json();
-
-      if (resData.quiz) {
-        const constructedQuiz: QuizFile = {
-          title: resData.quiz.title || `Quiz (${uploadedFiles[0]?.name || "Recall Lab"})`,
-          questions: resData.quiz.questions,
-        };
-        setQuiz(constructedQuiz);
-        setActiveSession(null);
-        setAttempts({});
-        setIndex(0);
-        setChoice(null);
-        setRevealed(false);
-        setAttemptCompletedAt(null);
-        setAttemptCompletedLocal(null);
-        setIsGenerating(false);
-        setNotice(
-          `Generated ${constructedQuiz.questions.length} questions grounded in your learning materials.`
-        );
-      } else if (resData.jobId) {
-        // Poll job progress if asynchronous
-        const pollInterval = setInterval(async () => {
-          try {
-            const pollRes = await fetch(`/api/quiz?jobId=${resData.jobId}`);
-            if (!pollRes.ok) return;
-            const jobData = await pollRes.json();
-
-            if (jobData.progress) {
-              setGenerationStage(jobData.progress.stage);
-              setGenerationMessage(jobData.progress.message || "Generating questions...");
-            }
-
-            if (jobData.progress?.stage === "complete" && jobData.quizId) {
-              clearInterval(pollInterval);
-              const quizRes = await fetch(`/api/quiz/${jobData.quizId}`);
-              if (!quizRes.ok) throw new Error("Could not load the generated quiz.");
-              const quizData = await quizRes.json();
-
-              const constructedQuiz: QuizFile = {
-                title: `Quiz (${uploadedFiles[0]?.name || "Recall Lab"})`,
-                questions: quizData.questions,
-              };
-              setQuiz(constructedQuiz);
-              setActiveSession(null);
-              setAttempts({});
-              setIndex(0);
-              setChoice(null);
-              setRevealed(false);
-              setAttemptCompletedAt(null);
-              setAttemptCompletedLocal(null);
-              setIsGenerating(false);
-              setNotice(
-                `Generated ${constructedQuiz.questions.length} questions grounded in your learning materials.`
-              );
-            } else if (jobData.progress?.stage === "failed" || jobData.error) {
-              clearInterval(pollInterval);
-              setIsGenerating(false);
-              setError(jobData.error?.message || "Generation failed. Please retry.");
-            }
-          } catch (pollErr) {
-            clearInterval(pollInterval);
-            setIsGenerating(false);
-            setError(prettyError(pollErr));
+      const clientJobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      let pollActive = true;
+      const progressPollTimer = setInterval(async () => {
+        if (!pollActive) return;
+        try {
+          const pollRes = await fetch(`/api/quiz?jobId=${clientJobId}`);
+          if (!pollRes.ok) return;
+          const jobData = await pollRes.json();
+          if (jobData.progress?.message) {
+            setGenerationStage(jobData.progress.stage || "generating");
+            setGenerationMessage(jobData.progress.message);
           }
-        }, 1500);
+        } catch {
+          // Ignore polling errors while main request is inflight
+        }
+      }, 1000);
+
+      try {
+        const res = await fetch("/api/quiz", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId: clientJobId,
+            document: processed.masterDoc,
+            options: {
+              questionCount,
+              focus: focus.trim() || undefined,
+              difficulty: difficulty !== "mixed" ? difficulty : undefined,
+            },
+            assessmentContext: processed.assessmentContext,
+          }),
+        });
+
+        pollActive = false;
+        clearInterval(progressPollTimer);
+
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          const status = res.status;
+          let errorMessage = errJson.error || "Failed to generate quiz.";
+          if (status === 413 || errJson.code === "AI_REQUEST_TOO_LARGE") {
+            errorMessage = `Request too large for Groq model token limit: ${errJson.error || "Material exceeded token limit"}.`;
+          } else if (status === 429 || errJson.code === "RATE_LIMITED") {
+            errorMessage = "Groq free-tier rate limit reached. Please wait a moment and try again.";
+          } else if (status === 503 || errJson.code === "AI_SERVER_UNAVAILABLE") {
+            errorMessage = "Groq service is temporarily busy or unavailable. Please retry in a few moments.";
+          } else if (status === 404 || errJson.code === "AI_MODEL_NOT_FOUND") {
+            errorMessage = errJson.error || "Configured Groq model was not found.";
+          } else if (status === 401 || status === 403 || errJson.code === "AI_AUTH_ERROR") {
+            errorMessage = "Groq authentication failed. Please check your GROQ_API_KEY.";
+          }
+          throw new Error(errorMessage);
+        }
+
+        const resData = await res.json();
+
+        if (resData.quiz) {
+          const constructedQuiz: QuizFile = {
+            title: resData.quiz.title || `Quiz (${uploadedFiles[0]?.name || "Recall Lab"})`,
+            questions: resData.quiz.questions,
+          };
+          setQuiz(constructedQuiz);
+          setActiveSession(null);
+          setAttempts({});
+          setIndex(0);
+          setChoice(null);
+          setRevealed(false);
+          setAttemptCompletedAt(null);
+          setAttemptCompletedLocal(null);
+          setIsGenerating(false);
+          setNotice(
+            `Generated ${constructedQuiz.questions.length} questions grounded in your learning materials.`
+          );
+        } else if (resData.jobId) {
+          // Poll job progress if asynchronous
+          const pollInterval = setInterval(async () => {
+            try {
+              const pollRes = await fetch(`/api/quiz?jobId=${resData.jobId}`);
+              if (!pollRes.ok) return;
+              const jobData = await pollRes.json();
+
+              if (jobData.progress) {
+                setGenerationStage(jobData.progress.stage);
+                setGenerationMessage(jobData.progress.message || "Generating questions...");
+              }
+
+              if (jobData.progress?.stage === "complete" && jobData.quizId) {
+                clearInterval(pollInterval);
+                const quizRes = await fetch(`/api/quiz/${jobData.quizId}`);
+                if (!quizRes.ok) throw new Error("Could not load the generated quiz.");
+                const quizData = await quizRes.json();
+
+                const constructedQuiz: QuizFile = {
+                  title: `Quiz (${uploadedFiles[0]?.name || "Recall Lab"})`,
+                  questions: quizData.questions,
+                };
+                setQuiz(constructedQuiz);
+                setActiveSession(null);
+                setAttempts({});
+                setIndex(0);
+                setChoice(null);
+                setRevealed(false);
+                setAttemptCompletedAt(null);
+                setAttemptCompletedLocal(null);
+                setIsGenerating(false);
+                setNotice(
+                  `Generated ${constructedQuiz.questions.length} questions grounded in your learning materials.`
+                );
+              } else if (jobData.progress?.stage === "failed" || jobData.error) {
+                clearInterval(pollInterval);
+                setIsGenerating(false);
+                setError(jobData.error?.message || "Generation failed. Please retry.");
+              }
+            } catch (pollErr) {
+              clearInterval(pollInterval);
+              setIsGenerating(false);
+              setError(prettyError(pollErr));
+            }
+          }, 1500);
+        }
+      } finally {
+        pollActive = false;
+        clearInterval(progressPollTimer);
       }
     } catch (err) {
       setIsGenerating(false);
@@ -979,7 +1112,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Primary Action Button */}
+            {/* Action Buttons */}
             <div className="import-actions" style={{ marginTop: "20px" }}>
               <button
                 type="button"
@@ -989,12 +1122,73 @@ export default function Home() {
               >
                 {isGenerating ? "Analyzing & Generating…" : "Generate Questions"} <span>→</span>
               </button>
+              <button
+                type="button"
+                className="button-dark"
+                onClick={handleExportExternalPackage}
+                disabled={isExportingZip || uploadedFiles.length === 0}
+                title="Export reference files and instructions in a ZIP for ChatGPT, Claude, etc."
+              >
+                {isExportingZip ? "Packaging…" : "Export for External AI"} <span>📦</span>
+              </button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  setIsImportModalOpen(true);
+                  if (jsonText.trim() && !importInputText) {
+                    setImportInputText(jsonText);
+                  }
+                }}
+              >
+                Import AI Results <span>📥</span>
+              </button>
             </div>
 
+            {/* Fallback Banner for Generation / Extraction Failures */}
             {error && (
-              <p className="inline-error" role="alert">
-                {error}
-              </p>
+              <div className="fallback-banner" role="alert">
+                <div className="fallback-header">
+                  <span className="fallback-icon">⚠️</span>
+                  <div>
+                    <strong>Automatic generation is temporarily unavailable</strong>
+                    <p>{error}</p>
+                  </div>
+                </div>
+                <p className="fallback-description">
+                  You can export your references and instructions, process them using another AI platform (ChatGPT, Claude, Gemini, etc.), and import the generated results here.
+                </p>
+                <div className="fallback-actions">
+                  <button
+                    type="button"
+                    className="button-primary"
+                    onClick={triggerAiGeneration}
+                    disabled={isGenerating || uploadedFiles.length === 0}
+                  >
+                    Retry Automatic Generation <span>↻</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="button-dark"
+                    onClick={handleExportExternalPackage}
+                    disabled={isExportingZip || uploadedFiles.length === 0}
+                  >
+                    {isExportingZip ? "Packaging…" : "Export for External AI (.zip)"} <span>📦</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => {
+                      setIsImportModalOpen(true);
+                      if (jsonText.trim() && !importInputText) {
+                        setImportInputText(jsonText);
+                      }
+                    }}
+                  >
+                    Import AI Results <span>📥</span>
+                  </button>
+                </div>
+              </div>
             )}
             {notice && (
               <p className="inline-notice" role="status">
@@ -1117,11 +1311,212 @@ export default function Home() {
             />
           )}
 
+          <button
+            type="button"
+            className="button-secondary full-button"
+            style={{ marginTop: "10px" }}
+            onClick={handleExportExternalPackage}
+            disabled={isExportingZip || uploadedFiles.length === 0}
+            title={
+              uploadedFiles.length === 0
+                ? "Upload reference files first to export package"
+                : "Download ZIP with references, prompt, and JSON schemas"
+            }
+          >
+            {isExportingZip ? "Packaging…" : "Download Full Study Package (.zip)"} <span>📦</span>
+          </button>
+
           <p className="privacy-note">
             When using Recall Lab&apos;s direct generation, your files are analyzed server-side with Groq AI and stay private to your session.
           </p>
         </aside>
       </section>
+
+      {/* Import AI Results Modal Dialog */}
+      {isImportModalOpen && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="import-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsImportModalOpen(false);
+          }}
+        >
+          <div className="modal-card">
+            <div className="modal-header">
+              <h2 id="import-modal-title">Import External AI Results</h2>
+              <button
+                type="button"
+                className="modal-close-button"
+                onClick={() => setIsImportModalOpen(false)}
+                aria-label="Close import dialog"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="modal-intro">
+              Upload or paste the JSON quiz produced by ChatGPT, Claude, Gemini, DeepSeek, or another model.
+              Recall Lab will validate all questions, options, and explanations before loading.
+            </p>
+
+            <div style={{ marginBottom: "14px" }}>
+              <label className="field-label" htmlFor="import-ai-textarea">
+                Paste JSON Quiz Output
+              </label>
+              <textarea
+                id="import-ai-textarea"
+                style={{
+                  width: "100%",
+                  minHeight: "160px",
+                  border: "1px solid var(--line)",
+                  background: "#fafaf6",
+                  padding: "10px",
+                  fontFamily: "monospace",
+                  fontSize: "11px",
+                  borderRadius: "3px",
+                }}
+                spellCheck={false}
+                placeholder={'{\n  "title": "Study Quiz",\n  "questions": [\n    {\n      "id": "q1",\n      "question": "...",\n      "options": { "A": "...", "B": "...", "C": "...", "D": "..." },\n      "correct_answer": "A",\n      "topic_reference": "...",\n      "explanation": "..."\n    }\n  ]\n}'}
+                value={importInputText}
+                onChange={(e) => {
+                  setImportInputText(e.target.value);
+                  setImportConfirmOverwrite(false);
+                }}
+              />
+            </div>
+
+            <div className="import-actions" style={{ marginBottom: "16px" }}>
+              <label className="button-secondary file-picker">
+                Choose .json file
+                <input type="file" accept=".json,application/json" onChange={handleImportFile} />
+              </label>
+              <button
+                type="button"
+                className="button-primary"
+                onClick={handleValidateImport}
+                disabled={!importInputText.trim()}
+              >
+                Validate & Preview
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  const exampleStr = JSON.stringify(exampleQuiz, null, 2);
+                  setImportInputText(exampleStr);
+                  setImportResult(validateExternalAiJson(exampleStr));
+                  setImportConfirmOverwrite(false);
+                }}
+              >
+                Load Sample Template
+              </button>
+            </div>
+
+            {/* Validation Errors List */}
+            {importResult && !importResult.success && importResult.errors.length > 0 && (
+              <div className="validation-error-list" role="alert">
+                <strong>Validation Issues Detected ({importResult.errors.length}):</strong>
+                <ul>
+                  {importResult.errors.map((err, idx) => (
+                    <li key={idx}>{err}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Validation Success & Preview Card */}
+            {importResult?.success && importResult.preview && (
+              <div className="import-preview-box">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <strong style={{ fontSize: "14px", color: "var(--deep)" }}>
+                    ✓ {importResult.preview.title}
+                  </strong>
+                  <span className="stat-pill">{importResult.preview.questionCount} Questions</span>
+                </div>
+
+                {importResult.preview.summary && (
+                  <p style={{ fontSize: "11px", color: "var(--muted)", margin: "8px 0" }}>
+                    {importResult.preview.summary}
+                  </p>
+                )}
+
+                <div className="preview-stats">
+                  {importResult.preview.difficulties.easy > 0 && (
+                    <span className="stat-pill">Easy: {importResult.preview.difficulties.easy}</span>
+                  )}
+                  {importResult.preview.difficulties.medium > 0 && (
+                    <span className="stat-pill">Medium: {importResult.preview.difficulties.medium}</span>
+                  )}
+                  {importResult.preview.difficulties.hard > 0 && (
+                    <span className="stat-pill">Hard: {importResult.preview.difficulties.hard}</span>
+                  )}
+                </div>
+
+                <div style={{ marginTop: "10px" }}>
+                  <span className="field-label">Detected Topics:</span>
+                  <div className="preview-topics-list">
+                    {importResult.preview.topics.slice(0, 8).map((t, idx) => (
+                      <span key={idx} className="topic-tag">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: "14px" }}>
+                  <span className="field-label">Sample Questions Preview:</span>
+                  {importResult.preview.sampleQuestions.map((sq, idx) => (
+                    <div key={idx} className="sample-q-box">
+                      <div className="sample-q-stem">
+                        {idx + 1}. {sq.question}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px", fontSize: "10px" }}>
+                        <div>A: {sq.options.A}</div>
+                        <div>B: {sq.options.B}</div>
+                        <div>C: {sq.options.C}</div>
+                        <div>D: {sq.options.D}</div>
+                      </div>
+                      <div className="sample-q-ans">Correct: Option {sq.correct_answer}</div>
+                      <div className="sample-q-exp">{sq.explanation}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Overwrite Confirmation Warning */}
+            {importConfirmOverwrite && (
+              <div className="validation-error-list" style={{ background: "#fff8f0", borderColor: "#f0d5b8" }}>
+                <strong style={{ color: "var(--orange)" }}>Warning: Active Quiz in Progress</strong>
+                <p style={{ margin: "4px 0 0", fontSize: "11px", color: "#6b4a2f" }}>
+                  An active quiz with submitted answers is currently open. Importing this study set will replace your current attempt. Are you sure you want to proceed?
+                </p>
+              </div>
+            )}
+
+            {/* Modal Bottom Actions */}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "18px" }}>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => setIsImportModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button-primary"
+                onClick={handleConfirmImport}
+                disabled={!importResult?.success}
+              >
+                {importConfirmOverwrite ? "Yes, Confirm Overwrite & Start Quiz" : "Confirm & Start Quiz"} <span>→</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <footer className="app-footer">
         <span>
